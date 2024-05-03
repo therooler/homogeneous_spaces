@@ -298,19 +298,14 @@ def vqe(
             np.save(data_path + f"gs_energy_{seed}.npy", gs_energy)
 
 
-data_header = "/"
-
-if __name__ == "__main__":
+def main(chain_type, run, plot):
     nruns = 1  # Number of VQE runs
     max_steps = 5000  # number of optimization steps in each VQE
     learning_rate = 1e-2  # Learning rate for gradient descent in the optimization
     nqubits = 8  # Number of qubits
     depth = 8  # Number of layers in the circuit ansatz. The VQE is run for each depth
-    RUN = False  # Whether to run the computation. If results are present, computations are skipped
-    PLOT = True  # Whether to create plots of the results
     np.random.seed(1234)
-    chain_type = 'uniform_chain'
-    # chain_type = 'random_chain'
+
     if chain_type == 'random_chain':
         J_i = np.random.randn(nqubits)
     elif chain_type == 'uniform_chain':
@@ -319,9 +314,8 @@ if __name__ == "__main__":
         raise NotImplementedError
     # Generate seeds (deterministically)
     seed_lists = [i * 37 for i in range(nruns)]
-
     # Run computation if requested. If results are present already, computations are skipped
-    if RUN:
+    if run:
         for state_0 in ['random', 'zero', 'psi_+', 'psi_-', 'phi_+', 'phi_-']:
             for gate in ['hom', 'equiv']:
                 data_header = gate
@@ -345,11 +339,11 @@ if __name__ == "__main__":
                 )
 
     # Create plots if requested
-    if PLOT:
+    if plot:
         plt.style.use("science")
         plt.rcParams.update({"font.size": 15})
         fig, axs = plt.subplots(1, 2)
-        left, bottom, width, height = [0.35, 0.7, 0.2, 0.2]
+
         ax_inset_0 = inset_axes(axs[0], width="30%", height="30%", loc='upper right')
         ax_inset_1 = inset_axes(axs[1], width="30%", height="30%", loc='upper right')
         inset_axs = [ax_inset_0, ax_inset_1]
@@ -384,30 +378,27 @@ if __name__ == "__main__":
                     prev_plot = axs[j].plot(list(range(1, max_steps + 2)), np.mean(data[i, j], axis=0),
                                             label=state_0_labels[i], linewidth=2,
                                             marker='.',
-                                            markevery=50, markersize=10, linestyle='dashed' if j == 1 else '-')
+                                            markevery=50, markersize=10, linestyle='-')
                     inset_axs[j].plot(np.mean(total_spin[i, j], axis=0)[:, 0] + 1,
                                       np.mean(total_spin[i, j], axis=0)[:, 1],
                                       marker='.', markevery=5, markersize=10, label=state_0_labels[i], linewidth=2,
-                                      linestyle='dashed' if j == 1 else '-',
+                                      linestyle='--',
                                       color=prev_plot[0].get_color())
 
                 else:
                     prev_plot = axs[j].plot(list(range(1, max_steps + 2)), np.mean(data[i, j], axis=0),
                                             label=state_0_labels[i], linewidth=2,
-                                            linestyle='dashed' if j == 1 else '-')
+                                            linestyle='-')
                     inset_axs[j].plot(np.mean(total_spin[i, j], axis=0)[:, 0] + 1,
                                       np.mean(total_spin[i, j], axis=0)[:, 1],
-                                      label=state_0_labels[i], linewidth=2, linestyle='dashed' if j == 1 else '-',
+                                      label=state_0_labels[i], linewidth=2, linestyle='--',
                                       color=prev_plot[0].get_color())
-        for ax in axs:
-            ax.set_xlabel("$N_{\mathrm{S}}$")
-            ax.set_xscale("log")
-            ax.set_ylim([1e-3, 5e3])
-            ax.grid()
 
         for ax in inset_axs:
             ax.set_ylabel(r'$\langle S^2 \rangle$')
             ax.set_xscale('log')
+            ax.tick_params(axis="x", which='both', top=False, right=False)
+            ax.tick_params(axis="y", which='both', top=False, right=False)
 
         axs[0].set_yscale("log")
         axs[0].set_ylabel(r"$\Delta \bar{E}$")
@@ -416,22 +407,23 @@ if __name__ == "__main__":
         axs[0].legend(prop={'size': 12}, loc='lower left')
 
         axs[1].set_yscale("log")
-        axs[1].set_yticks(())
-        axs[0].tick_params(axis="x", which='both', top=False, right=False)
+        axs[1].set_yticklabels(())
+        axs[1].tick_params(axis="x", which='both', top=False, right=False)
         axs[1].tick_params(axis="y", which='both', top=False, right=False, left=False)
 
-        # axs[0].set_title(r'(a) Horizontal', y=-0.3)
-        # axs[1].set_title(r'(b) Equivariant', y=-0.3)
         axs[0].set_title(r'Horizontal')
         axs[1].set_title(r'Equivariant')
-
-        # axs[2].set_ylabel(r'$\langle S^2 \rangle$', y=-0.3)
+        for ax in axs:
+            # ax.set_xlabel(r"$N_{\mathrm{S}}$")
+            ax.set_xlabel(r"Iterations")
+            ax.set_xscale("log")
+            ax.set_ylim([1e-3, 12e3])
+            ax.grid(True)
         fig.subplots_adjust(wspace=0.0)
-        # position = axs[2].get_position()
-        # position.x0 = position.x0 + 0.05  # Adjust this value to control the distance
-        # axs[2].set_position(position)
-
-        # Save plot
-        # plt.tight_layout()
         fig.savefig(f"./figures/FIG1_{chain_type}_{nqubits}_{depth}_qubit_comparison.pdf", dpi=300)
         plt.show()
+
+
+if __name__ == '__main__':
+    main(run=True, plot=True, chain_type='random_chain')
+    main(run=True, plot=True, chain_type='uniform_chain')

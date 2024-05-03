@@ -4,3 +4,5 @@ PennyLane==0.34.0
 jax==0.4.24
 jaxlib==0.4.24
 matplotlib==3.7.1
+tqdm==4.65.0
+optax==0.1.7

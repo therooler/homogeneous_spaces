@@ -5,7 +5,7 @@ import numpy as np
 from src.involutions import involution_types, get_m_basis
 from src.symmetric_gate import SymmetricGate
 from tqdm import tqdm
-
+import optax
 import jax
 
 jax.config.update("jax_enable_x64", True)
@@ -14,37 +14,6 @@ jax.config.update("jax_platform_name", "cpu")
 """Run the VQE example in the paper and create the corresponding plots."""
 import os
 from functools import partial
-from itertools import product
-from multiprocessing import Pool
-from dill import dump
-
-# Choose the following settings
-
-#  These are the settings used for the paper
-nruns = 10  # Number of VQE runs
-max_steps = 10000  # number of optimization steps in each VQE
-learning_rate = 1e-3  # Learning rate for gradient descent in the optimization
-nqubits = 6  # Number of qubits
-cost_fn = 'goe'  # type of cost
-depths = [5, ]  # Number of layers in the circuit ansatz. The VQE is run for each depth
-RUN = True  # Whether to run the computation. If results are present, computations are skipped
-PLOT = True  # Whether to create plots of the results
-num_workers = 1  # Number of threads to use in parallel. Needs to be set machine-dependently
-
-"""
-#  These are some settings with much lower computational cost, for illustration and testing
-nruns = 4  # Number of VQE runs
-max_steps = 1000  # number of optimization steps in each VQE
-learning_rate = 1e-3  # Learning rate for gradient descent in the optimization
-nqubits = 4  # Number of qubits
-depths = [1, 2, 3]  # Number of layers in the circuit ansatz. The VQE is run for each depth
-RUN = True  # Whether to run the computation. If results are present, computations are skipped
-PLOT = True  # Whether to create plots of the results
-num_workers = 4  # Number of threads to use in parallel. Needs to be set machine-dependently
-"""
-
-# Directory name to save results to. They will be in f"./data/{data_header}/"
-data_header = ""
 
 
 def apply_op_in_layers(theta, Op, depth, nqubits):
@@ -139,6 +108,8 @@ def gate_decomp_so4(params, wires):
     qml.RY(params[3], wires=j)
     qml.RX(params[4], wires=j)
     qml.RY(params[5], wires=j)
+    # CNOT with control on qubit 2
+    qml.CNOT(wires=[j, i])
     # Single R1* block
     qml.RY(-np.pi / 2, wires=j)
     # Single S1* block
@@ -231,7 +202,7 @@ def make_observable_gse(wires, seed):
 
 
 def vqe(
-        seed_list,
+        seed,
         nqubits=None,
         depth=None,
         opname=None,
@@ -296,59 +267,64 @@ def vqe(
         raise ValueError
     dev = qml.device(dev_type, wires=nqubits)
 
-    for seed in tqdm(seed_list):
-        if cost_fn == 'gue':
-            observable, observable_matrix = make_observable_gue(dev.wires, seed)
-        elif cost_fn == 'goe':
-            observable, observable_matrix = make_observable_goe(dev.wires, seed)
+    if cost_fn == 'gue':
+        observable, observable_matrix = make_observable_gue(dev.wires, seed)
+    elif cost_fn == 'goe':
+        observable, observable_matrix = make_observable_goe(dev.wires, seed)
 
-        @qml.qnode(dev, interface="jax", diff_method=diff_method)
-        def cost_function(params):
-            """Cost function of the VQE."""
-            if opname != "decomp":
-                def op_inv(theta, wires):
-                    return Op(theta, wires, opname, p, q)
+    @qml.qnode(dev, interface="jax", diff_method=diff_method)
+    def cost_function(params):
+        """Cost function of the VQE."""
+        if opname != "decomp":
+            def op_inv(theta, wires):
+                return Op(theta, wires, opname, p, q)
 
-                apply_op_in_layers(params, op_inv, depth, nqubits)
-            else:
-                apply_op_in_layers(params, Op, depth, nqubits)
-            return qml.expval(observable)
-
-        grad_function = jax.jit(jax.grad(cost_function))
-        cost_function = jax.jit(cost_function)
-
-        # Store the ground state and maximal energy of the created observable on disk
-        if not os.path.exists(data_path + f"gs_energy_{seed}.npy"):
-            energies = np.linalg.eigvalsh(observable_matrix)
-            gs_energy = energies[0]
-            max_energy = energies[-1]
-            np.save(data_path + f"gs_energy_{seed}.npy", gs_energy)
-            np.save(data_path + f"max_energy_{seed}.npy", max_energy)
-
-        cost_path = data_path + f"cost_{seed}.npy"
-
-        # Check whether the optimization curves already exist on disk
-        if not os.path.exists(cost_path):
-            # Parameter shape: depth x (2 layers) x (15 = 4**2-1)
-            shape = (depth, 2, parameters_per_gate)
-            # Create initial parameters
-            params = jax.numpy.zeros(shape)
-
-            cost_history = []
-            for _ in tqdm(range(max_steps)):
-                # Record old cost
-                cost_history.append(cost_function(params))
-                # Make step
-                params = params - learning_rate * grad_function(params)
-
-            # Record final cost
-            cost_history.append(cost_function(params))
-            # Save cost to disk
-            np.save(cost_path, np.array(cost_history))
+            apply_op_in_layers(params, op_inv, depth, nqubits)
         else:
-            # Load cost from disk
-            cost_history = np.load(cost_path)
-            print(f"{cost_path} exists, loaded data!")
+            apply_op_in_layers(params, Op, depth, nqubits)
+        return qml.expval(observable)
+
+    grad_function = jax.jit(jax.grad(cost_function))
+    cost_function = jax.jit(cost_function)
+
+    # Store the ground state and maximal energy of the created observable on disk
+    if not os.path.exists(data_path + f"gs_energy_{seed}.npy"):
+        energies = np.linalg.eigvalsh(observable_matrix)
+        gs_energy = energies[0]
+        max_energy = energies[-1]
+        np.save(data_path + f"gs_energy_{seed}.npy", gs_energy)
+        np.save(data_path + f"max_energy_{seed}.npy", max_energy)
+
+    cost_path = data_path + f"cost_{seed}.npy"
+
+    # Check whether the optimization curves already exist on disk
+    if not os.path.exists(cost_path):
+        # Parameter shape: depth x (2 layers) x (15 = 4**2-1)
+        shape = (depth, 2, parameters_per_gate)
+        # Create initial parameters
+        params = jax.numpy.zeros(shape)
+        optimizer = optax.adam(learning_rate=learning_rate)
+        opt_state = optimizer.init(params)
+        cost_history = []
+        for step in tqdm(range(max_steps), mininterval=1):
+            # Record old cost
+            cost_history.append(cost_function(params))
+            grads = grad_function(params)
+            # Make step
+            updates, opt_state = optimizer.update(grads, opt_state)
+            if step > 100 and (step + 1) % 100:
+                if np.isclose(cost_history[-1], cost_history[-100], atol=1e-7):
+                    print(f'Early stopping at step: {step}')
+                    break
+            params = optax.apply_updates(params, updates)
+        # Record final cost
+        cost_history.append(cost_function(params))
+        cost_history.extend([cost_history[-1]] * (max_steps - len(cost_history) + 1))
+        # Save cost to disk
+        np.save(cost_path, np.array(cost_history))
+    else:
+        # Load cost from disk
+        print(f"{cost_path} exists, loaded data!")
 
 
 def load_data(nqubits, depth, seed_list, max_steps, data_header, opname="decomp", p_q=(None, None), cost_fn='gue'):
@@ -421,45 +397,67 @@ def plot_optim_curves(nqubits, depth, gates, seed_list, max_steps, data_header, 
               plt.get_cmap('Oranges'),
               plt.get_cmap('Purples')]
     num_seeds = len(seed_list)
+    label_names = {'decomp': 'Decomp.',
+                   'AIII': r"$\mathrm{SU}(4)/\mathrm{U}(3)$",
+                   'BDI': r"$\mathrm{SO}(4)/\mathrm{O}(3)$"}
     for i in range(num_seeds):
         for j, (opname, p_q) in enumerate(gates):
             if i == (num_seeds // 2):
-                axs.plot(np.array(list(range(max_steps + 1))) * n_params[j], data[j][i],
+                axs.plot(np.array(list(range(max_steps + 1))), data[j][i],
                          linewidth=1, color=colors[j]((i + 1) / num_seeds),
-                         label=opname + f"{p_q if p_q[0] is not None else ''}")
+                         label=label_names[opname])
             else:
-                axs.plot(np.array(list(range(max_steps + 1))) * n_params[j], data[j][i],
+                axs.plot(np.array(list(range(max_steps + 1))), data[j][i],
                          linewidth=1, color=colors[j]((i + 1) / num_seeds))
-    axs.legend()
-    # axs.set_xscale('log')
-    # axs.set_yscale('log')
+    axs.legend(loc='lower left')
+    axs.set_xscale('log')
+    axs.set_ylim([0.2, 0.65])
     axs.set_xlabel(r"Step $\times$ \#Parameters")
     axs.set_ylabel(r"$\bar{E}$")
+    # axs.grid()
     plt.tight_layout()
-    left, bottom, width, height = [0.35, 0.7, 0.2, 0.2]
+    left, bottom, width, height = [0.5, 0.7, 0.4, 0.2]
     ax2 = fig.add_axes([left, bottom, width, height])
-    for j, (opname, p_q) in enumerate(gates):
-        ax2.plot(np.sort(data[j][:, -1]), color=colors[j](0.7))
+    # sort_order = np.argsort(data[0][:, -1])
+    ax2.plot(list(range(1, num_seeds + 1)),
+             np.sort(data[0][:, -1] - data[1][:, -1]), color=colors[2](0.7), linewidth=1, marker='.')
+    ax2.plot(list(range(1, num_seeds + 1)), [0.0] * num_seeds, color='gray', linestyle='--')
+    ax2.set_ylabel(r"$\Delta\Bar{E}_{\mathrm{final}}$")
+    ax2.set_xlabel(r"Instance")
+    # ax2.set_yscale(r"log")
+    # ax2.set_ylim([1e-6, 1e-1])
 
+    for ax in [axs, ax2]:
+        ax.tick_params(axis="x", which='both', top=False, right=False)
+        ax.tick_params(axis="y", which='both', top=False, right=False)
     fig.savefig(f"./figures/FIG2_{nqubits}_qubit_{depth}_{cost_fn}_trajectories_quotients.pdf")
     plt.show()
 
 
-if __name__ == "__main__":
+def main(cost_fn, seed_idx, nqubits, depth, run=True, plot=False):
+    # Choose the following settings
+    #  These are the settings used for the paper
+    nruns = 100  # Number of VQE runs
+    max_steps = 10000  # number of optimization steps in each VQE
+    learning_rate = 1e-2  # Learning rate for gradient descent in the optimization
+    RUN = run  # Whether to run the computation. If results are present, computations are skipped
+    print(f"Cost fn = {cost_fn}")
+    print(f"Nruns = {nruns}")
+    print(f"max_steps = {max_steps}")
+    print(f"learning_rate = {learning_rate:1.3f}")
+    print(f"Nqubits = {nqubits}")
+    print(f"Depth = {depth}")
+    # Directory name to save results to. They will be in f"./data/{data_header}/"
+    data_header = ""
     data_header = data_header.strip("/")
     # Generate seeds (deterministically)
-    runs_per_worker = nruns // num_workers
-    seed_lists = [
-        [i * 37 for i in range(j * runs_per_worker, (j + 1) * runs_per_worker)]
-        for j in range(num_workers)
-    ]
-
+    seed_list = [i * 37 for i in range(nruns)]
+    if seed_idx is not None:
+        seed_list = [seed_list[seed_idx]]
     # Store the global variables to allow for later investigation of settings
     global_config_path = f"./data/{data_header}/{cost_fn}/{nqubits}/"
     if not os.path.exists(global_config_path):
         os.makedirs(global_config_path)
-    with open(global_config_path + "globals.dill", "wb") as file:
-        dump(globals(), file)
     if cost_fn == 'gue':
         gates = [("decomp", (None, None)),
                  ("AIII", (1, 3)),
@@ -475,7 +473,7 @@ if __name__ == "__main__":
 
     # Run computation if requested. If results are present already, computations are skipped
     if RUN:
-        for depth, (opname, p_q) in product(depths, gates):
+        for (opname, p_q) in gates:
             # Set up path and create missing directories
             if p_q[0] is not None:
                 data_path = f"./data/{data_header}/{cost_fn}/{nqubits}/{depth}/{opname}_{p_q[0]}_{p_q[1]}/"
@@ -497,10 +495,29 @@ if __name__ == "__main__":
                 cost_fn=cost_fn
             )
             # Map ``vqe`` across the partial seed lists for parallel execution
-            with Pool(num_workers) as p:
-                p.map(func, seed_lists)
+            for seed in tqdm(seed_list):
+                func(seed)
 
     # Create plots if requested
-    if PLOT:
-        seed_list = sum(seed_lists, start=[])
-        plot_optim_curves(nqubits, max(depths), gates, seed_list, max_steps, data_header, cost_fn=cost_fn)
+    if plot:
+        plot_optim_curves(nqubits, depth, gates, seed_list, max_steps, data_header, cost_fn=cost_fn)
+
+
+if __name__ == "__main__":
+    import argparse
+
+    parser = argparse.ArgumentParser()
+    parser.add_argument('--seed_idx', default=None) # If running these scripts in parallel
+    parser.add_argument('--N', default=8)
+    parser.add_argument('--L', default=4)
+    parser.add_argument('--run', default=True)
+    args = parser.parse_args()
+    seed_idx = args.seed_idx
+    if seed_idx is not None:
+        seed_idx = int(seed_idx)
+        print(f"Running seed {seed_idx}")
+        PLOT = False
+    else:
+        PLOT = True
+    main('gue', seed_idx, nqubits=int(args.N), depth=int(args.L), run=bool(args.run), plot=PLOT)
+    main('goe', seed_idx, nqubits=int(args.N), depth=int(args.L), run=bool(args.run), plot=PLOT)
