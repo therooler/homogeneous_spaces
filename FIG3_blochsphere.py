@@ -121,7 +121,7 @@ def main():
     ax.set_xticks([])
     ax.set_yticks([])
     ax.set_zticks([])
-    plt.savefig('./figures/FIG4_coset_sphere.pdf')
+    plt.savefig('./figures/FIG3_coset_sphere.pdf')
     plt.show()
 
 
