@@ -352,13 +352,14 @@ def load_data(nqubits, depth, seed_list, max_steps, data_header, opname="decomp"
     data = np.zeros((len(seed_list), max_steps + 1))
 
     for i, seed in enumerate(seed_list):
-        gs_energy = np.load(f"{data_path}/gs_energy_{seed}.npy")
-        max_energy = np.load(f"{data_path}/max_energy_{seed}.npy")
-        spectrum_width = max_energy - gs_energy
         try:
+            gs_energy = np.load(f"{data_path}/gs_energy_{seed}.npy")
+            max_energy = np.load(f"{data_path}/max_energy_{seed}.npy")
+            spectrum_width = max_energy - gs_energy
             data[i] = (np.load(f"{data_path}/cost_{seed}.npy") - gs_energy) / spectrum_width
         except FileNotFoundError:
             # Just skip files that were not found
+            data[i] = [np.nan] * (max_steps + 1)
             print(f"File {data_path}/cost_{seed}.npy not found, skipping...")
 
     return data
@@ -411,8 +412,8 @@ def plot_optim_curves(nqubits, depth, gates, seed_list, max_steps, data_header, 
                          linewidth=1, color=colors[j]((i + 1) / num_seeds))
     axs.legend(loc='lower left')
     axs.set_xscale('log')
-    axs.set_ylim([0.2, 0.65])
-    axs.set_xlabel(r"Step $\times$ \#Parameters")
+    axs.set_ylim([0.3, 0.65])
+    axs.set_xlabel(r"Step")
     axs.set_ylabel(r"$\bar{E}$")
     # axs.grid()
     plt.tight_layout()
@@ -507,10 +508,10 @@ if __name__ == "__main__":
     import argparse
 
     parser = argparse.ArgumentParser()
-    parser.add_argument('--seed_idx', default=None) # If running these scripts in parallel
-    parser.add_argument('--N', default=8)
-    parser.add_argument('--L', default=4)
-    parser.add_argument('--run', default=True)
+    parser.add_argument('--seed_idx', default=None)  # If running these scripts in parallel
+    parser.add_argument('--N', default=12)
+    parser.add_argument('--L', default=12)
+    parser.add_argument('--run', default=False)
     args = parser.parse_args()
     seed_idx = args.seed_idx
     if seed_idx is not None:
