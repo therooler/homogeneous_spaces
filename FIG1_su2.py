@@ -340,6 +340,7 @@ def main(chain_type, run, plot):
 
     # Create plots if requested
     if plot:
+        print(plt.style.available)
         plt.style.use("science")
         plt.rcParams.update({"font.size": 15})
         fig, axs = plt.subplots(1, 2)
